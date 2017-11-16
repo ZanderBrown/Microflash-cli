@@ -27,18 +27,27 @@ try:
     # State where we are monitoring
     print("Monitoring: {}".format(gfile.get_path()))
 
+    current = None
+
     # This function is run whenever 'monitor' notices a change
     def cb(obj, src, dest, event):
+        global current
         # If it was a create event and the file extension is hex
         if (event == Gio.FileMonitorEvent.CREATED and
                 src.get_path().endswith(".hex")):
             # Ideally we check if the hex is valid somehow as
             # all this does it check it isn't an empty file
-            getsize(src.get_path())
             if getsize(src.get_path()) < 1:
                 return
             # Say we found a hex
             print("Found: {}".format(src.get_path()))
+
+            if current:
+                print("Cancelling current operation")
+                current.cancel()
+
+            current = Gio.Cancellable()
+
             # Get a refrence to the default GVolumeMonitor that allows
             # us to inspect the connected Volumes
             drives = Gio.VolumeMonitor.get()
@@ -73,13 +82,18 @@ try:
                             # A wrapper around 'copy' so we can use it
                             # as the target of a threading.Thread
                             def wrap():
+                                global current
                                 # Copy the file 'src' to the destination
                                 # 'dest' with flags
-                                src.copy(dest, flags)
-                                # Copy is blocking so this will be run
-                                # when it has successfully compleated
-                                # Show that we managed to flash the hex
-                                print("Flashed: {}".format(mb))
+                                try:
+                                    src.copy(dest, flags, current)
+                                    # Copy is blocking so this will be run
+                                    # when it has successfully compleated
+                                    # Show that we managed to flash the hex
+                                    print("Flashed: {}".format(mb))
+                                    current = None
+                                except:
+                                    current = None
 
                             # Run 'wrap' in a thread so that we may
                             # flash multiple bits simultaneously
@@ -88,10 +102,15 @@ try:
                             # Callback for copy_async so we can
                             # communicate the fact it's finished
                             def done(src, res, user_data):
-                                # Ensure the write is compleate
-                                src.copy_finish(res)
-                                # Say where we copied to
-                                print("Flashed: {}".format(user_data))
+                                global current
+                                try:
+                                    # Ensure the write is compleate
+                                    src.copy_finish(res)
+                                    # Say where we copied to
+                                    print("Flashed: {}".format(user_data))
+                                    current = None
+                                except:
+                                    current = None
 
                             # Copy 'src' to 'dest' asynchronous with
                             # the givien flags and priority. We also
@@ -102,7 +121,8 @@ try:
                             # data to pass to it so it know who called
                             # back so it can communicate compleation
                             src.copy_async(dest, flags, priority,
-                                           None, None, None, done, mb)
+                                           current, None, None,
+                                           done, mb)
 
                     except:
                         # Something broke, say we couldn't copy to
