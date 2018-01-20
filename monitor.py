@@ -1,14 +1,15 @@
 #! /usr/bin/env python3
 
-from gi.repository import GLib, Gio
+from gi.repository import GLib, Gio, GObject
 from os.path import getsize
 
 # 'copy_async' is unavailable in some releases of the Gio bindings
 # so we import Thread so that we may emulate 'copy_async' if needed
 from threading import Thread
 
-class Microflash:
+class Microflash(GObject.Object):
     def __init__(self, path):
+        super().__init__()
         # Setup a GFile for the directory we are interested in
         gfile = Gio.File.new_for_path(path)
 
@@ -31,6 +32,11 @@ class Microflash:
         # State where we are monitoring
         print("Monitoring: {}".format(gfile.get_path()))
 
+    @GObject.Signal(arg_types=(str, str))
+    def flashed (self, what, where):
+        print("Flashed: {}".format(where))
+        self.operations[where] = None
+
     # Callback for copy_async so we can
     # communicate the fact it's finished
     def copy_async(self, src, res, mb):
@@ -39,10 +45,11 @@ class Microflash:
             src.copy_finish(res)
             # Say where we copied to
             print("Flashed: {}".format(mb))
+            self.emit("flashed", src.get_basename(), mb)
             self.operations[mb] = None
         except Exception as e:
             self.operations[mb] = None
-            print("Bad stuff", str(e))
+            print("Failed to copy to {}\nError: {}".format(mb, str(e)))
 
     # A wrapper around 'copy' so we can use it
     # as the target of a threading.Thread
@@ -54,11 +61,10 @@ class Microflash:
             # Copy is blocking so this will be run
             # when it has successfully compleated
             # Show that we managed to flash the hex
-            print("Flashed: {}".format(mb))
-            self.operations[mb] = None
+            self.emit("flashed", src.get_basename(), mb)
         except Exception as e:
             self.operations[mb] = None
-            print("Bad stuff", str(e))
+            print("Failed to copy to {}\nError: {}".format(mb, str(e)))
 
     # This function is run whenever 'monitor' notices a change
     def cb(self, obj, src, dest, event):
@@ -135,17 +141,20 @@ class Microflash:
                         # this micro:bit
                         print("Failed to copy to {}\nError: {}".format(mb, str(e)))
 
-# Directory to monitor,
-# by default we use the current users downloads
-wdir = "{}/Downloads".format(GLib.get_home_dir())
-mf = Microflash(wdir)
+# If the __name__ is main this script was run directly so start the
+# watcher otherwise leave it for the script including us to do
+if __name__ == '__main__':
+	# Directory to monitor,
+	# by default we use the current users downloads
+	wdir = "{}/Downloads".format(GLib.get_home_dir())
+	mf = Microflash(wdir)
 
-# This try is used to catch events such as Ctrl-C
-# so we can exit gracefully
-try:
-    # Start the mainloop so that GFileMonitor can looks for changes
-    # and the script doesn't complete instantly
-    GLib.MainLoop().run()
-except KeyboardInterrupt:
-    # Quit the main loop on Ctrl-C and friends
-    GLib.MainLoop().quit()
+	# This try is used to catch events such as Ctrl-C
+	# so we can exit gracefully
+	try:
+		# Start the mainloop so that GFileMonitor can looks for changes
+		# and the script doesn't complete instantly
+		GLib.MainLoop().run()
+	except KeyboardInterrupt:
+		# Quit the main loop on Ctrl-C and friends
+		GLib.MainLoop().quit()
